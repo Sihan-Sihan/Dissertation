@@ -1,0 +1,763 @@
+
+## 1.2  Install packages and load libraries
+```{r, include=FALSE, cache=TRUE, message = FALSE}
+library(sp)
+library(sf)
+library(tmap)
+library(tmaptools)
+library(sf)
+library(geojsonio)
+library(dplyr)
+library(ggplot2)
+library(ggthemes)
+```
+
+```{r, eval = FALSE}
+library(sp)
+library(sf)
+library(tmap)
+library(tmaptools)
+library(sf)
+library(geojsonio)
+library(dplyr)
+library(ggplot2)
+library(ggthemes)
+```
+
+```{r, results="hide",cache=TRUE, message = FALSE}
+# Get the London LSOA Boundaries
+LD_MSOA <- st_read(
+  'D:/F_SCUA-UCL/CASA05/workshop_1/statistical-gis-boundaries-london/statistical-gis-boundaries-london/ESRI/MSOA_2011_London_gen_MHW.shp')   #You can change it to your own path
+```
+
+The next step is to calculate the area of each region for further analysis
+```{r, cache=TRUE, message = FALSE}
+# Calculate area
+LD_MSOA_area <- st_area(LD_MSOA)
+LD_MSOA_area <- LD_MSOA_area %>% as.numeric(as.character(LD_MSOA_area))
+
+# Add a colomn of area to LD_LSOA
+LD_MSOA$area<- LD_MSOA_area
+
+# Transform geographic coordinate to 4326
+LD_MSOA <-  LD_MSOA %>%
+  st_transform(4326)
+
+# Remove useless data 
+LD_MSOA <- LD_MSOA %>%
+  select('MSOA11CD', 'MSOA11NM','POPDEN', 'geometry', 'area')
+head(LD_MSOA)
+```
+
+
+## 2.1 Neighborhood living
+### 2.3.1 Road network density
+
+```{r, cache=TRUE, message = FALSE}
+# Read data
+LD_road <- st_read('D:/F_SCUA-UCL/Final/GIS_Final/data/street/gis_osm_roads_free_1.shp')
+
+# Intersect the road and boundaries
+road_intersect <- LD_road %>%
+  st_join(., LD_MSOA)
+
+# Calculate the length of road in each region
+length <- st_length(road_intersect)
+length <- as.numeric(length)
+road_intersect$length <- length
+
+
+# Calculate the account length of each region
+road_intersect <- road_intersect %>%
+  group_by(MSOA11CD, ) %>%
+  summarise(.,sum(length))
+
+# Remove NA
+road_intersect <- road_intersect%>%
+  filter(MSOA11CD != '')%>%
+  st_drop_geometry()
+
+# Join the road data to LD_LSOA
+MSOA_road_account <- left_join(LD_MSOA, road_intersect, by=c('MSOA11CD'= 'MSOA11CD'))
+
+# Calculate road density
+MSOA_road_account$density <- MSOA_road_account$`sum(length)` / MSOA_road_account$area
+```
+
+```{r, cache=TRUE, message = FALSE}
+# plot
+tm_shape(MSOA_road_account)+
+  ## boundries
+  tm_borders(col = "white",alpha = 0.01, lwd = 0.01)+
+  ## fill color
+  tm_fill(col = 'density',n = 5,style = 'quantile', palette = "Blues",colorNA = "gray",
+          legend.show = TRUE,legend.hist = FALSE,
+          title = 'Road Density',text.size = 0.1)+
+  tm_compass(size = 2.5, text.size = 0.7, type = "arrow", position=c("left", "bottom"))+ #compass
+  tm_scale_bar(width = 0.15, position=c("left", "bottom"), text.size = 0.5)+   ## bar
+  # tm_xlab("Longitude") + tm_ylab("Latitude")  # coordinate
+  tm_layout(title = "c.Small Block", 
+            main.title = "", title.size = 1)
+```
+
+### 2.3.2 POIs density and diversity
+POI data is the data for September 2019 and downloaded from the digimap (<https://digimap.edina.ac.uk/>, Ordnance Survey > Data Download > Boundary and Location Data). which providing a full range of topographic Ordnance Survey data. There are 353532 points in Greater London. 
+
+1） Process data of POI
+```{r,cache=TRUE, message = FALSE}
+
+# Read data
+poi <- st_read('D:/F_SCUA-UCL/Final/GIS_Final/data/POI/POI.shp')
+## Data Copyright Note
+## Ordnance Survey Digimap: Licensed Data: © Crown copyright and database rights 2020 Ordnance Survey (100025252). 
+## This material includes data licensed from PointX© Database Right/Copyright 2020.
+
+# Remove useless data 
+poi_LD <- poi %>%
+  select('ref_no', 'name','groupname', 'geographic', 'categoryna', 'classname', 'geometry')
+
+# PLOT Points heat map to view the data
+poi_LD <- poi_LD %>%
+  st_transform(4326) %>% # tranform to same CRS as stations and lines
+  cbind(st_coordinates(.))
+### Add boundaries of borough (LSOA is too small)
+Londonborough <- st_read(
+  'D:/F_SCUA-UCL/CASA05/workshop_1/statistical-gis-boundaries-london/statistical-gis-boundaries-london/ESRI/London_Borough_Excluding_MHW.shp')
+
+### plot heatmap
+```
+Clean data 
+```{r message=FALSE}
+
+# Remove points outside of London
+poi_LD_clean <- poi_LD %>%
+  filter(geographic == 'Greater London')
+poi_MSOA <- poi_LD_clean %>%
+  st_join(., LD_MSOA)
+
+```
+
+Step1 Divide the total number of POIs by the area to get the result of POIs density.
+```{r, cache=TRUE, message = FALSE}
+
+# count points of each LOSA
+poi_count <- poi_MSOA %>%
+  group_by(MSOA11CD) %>%
+  summarise(n=n())
+poi_count <- poi_count %>% 
+  st_drop_geometry()
+
+# add the numbers of points to LOSA (then can calculate density and plot)
+MSOA_POI_account <- left_join(LD_MSOA, poi_count, by=c('MSOA11CD'= 'MSOA11CD'))
+MSOA_POI_account$density <- MSOA_POI_account$n / MSOA_POI_account$area
+
+```
+
+Plot **POI density**
+```{r, cache=TRUE, message = FALSE}
+
+tm_shape(MSOA_POI_account)+
+  tm_borders(col = "white",alpha = 0.01, lwd = 0.01)+
+  tm_fill(col = 'density',n = 5,style = 'quantile', palette = "YlGnBu",colorNA = "gray",
+          legend.show = TRUE,legend.hist = FALSE,
+          title = 'MSOA_POI_account')+
+  tm_compass(size = 2.5, text.size = 0.7, type = "arrow", position=c("left", "bottom"))+ #compass
+  tm_scale_bar(width = 0.15, position=c("left", "bottom"), text.size = 0.5)+   ## bar
+  tm_layout(title = "a.Mixed-use", 
+            main.title = "", title.size = 0.77) 
+```
+
+Step2 Count all types of POI to get the result of POIs diversity. 
+```{r,cache=TRUE, message = FALSE}
+# Create a 'Richness' metric by 'Group', "Category' and 'Class'
+div_tab <- poi_MSOA %>%
+  st_drop_geometry() %>%
+  group_by(MSOA11CD) %>%
+  summarise(rich_g = n_distinct(groupname),
+            rich_cat = n_distinct(categoryna),
+            rich_cla = n_distinct(classname))
+
+# Merge
+diversity <- MSOA_POI_account %>%
+  merge(., div_tab)
+
+diversity$rich_cla_den <- diversity$rich_cla / diversity$area
+```
+Plot **POI density**
+```{r, cache=TRUE, message = FALSE}
+## plot
+tm_shape(diversity)+
+  ## boundries
+  tm_borders(col = "white",alpha = 0.01, lwd = 0.01)+
+  ## fill color
+  tm_fill(col = 'rich_cla_den',n = 5,style = 'quantile', palette = "YlGnBu",colorNA = "gray",
+          legend.show = TRUE,legend.hist = FALSE,
+          title = 'POI_Diversity')+
+  tm_compass(size = 2.5, text.size = 0.7, type = "arrow", position=c("left", "bottom"))+ #compass
+  tm_scale_bar(width = 0.15, position=c("left", "bottom"), text.size = 0.5)+   ## bar
+  # tm_xlab("Longitude") + tm_ylab("Latitude")  # coordinate
+  tm_layout(title = "c.Diversity of Points of Interest(per m2)", 
+            main.title = "", title.size = 0.77) 
+```
+
+
+### 2.3.3 the building age
+plot **the building age**. 
+```{r, cache=TRUE, message = FALSE}
+building_age <- read.csv('D:/F_SCUA-UCL/Final of year/FINAL/1.csv')
+
+head(building_age)
+
+building_age <- building_age %>%
+  filter(GEOGRAPHY == 'MSOA' )
+
+building_age$mean <- ( building_age$BP_PRE_1900 * 0 + building_age$BP_1900_1918 * 9 + building_age$BP_1919_1929 * 24 +
+  building_age$BP_1930_1939 * 35 + building_age$BP_1945_1954 * 50 + building_age$BP_1955_1964 * 60 + building_age$BP_1965_1972 *69 + 
+  building_age$BP_1973_1982 * 78 + building_age$BP_1983_1992 * 88 + building_age$BP_1993_1999 * 96 + building_age$BP_2000_2009 * 105 +
+  building_age$BP_2010_2015 * 103 ) / (building_age$BP_PRE_1900 + building_age$BP_1900_1918 + building_age$BP_1919_1929 +
+                                       building_age$BP_1930_1939 + building_age$BP_1945_1954 + building_age$BP_1955_1964 + building_age$BP_1965_1972 + 
+                                       building_age$BP_1973_1982 + building_age$BP_1983_1992 + building_age$BP_1993_1999 + building_age$BP_2000_2009 +
+                                       building_age$BP_2010_2015+ 0.00000001)
+
+BA <- building_age %>%
+  group_by(ECODE)%>%
+  summarise(.,mean(mean))
+
+BA <- BA %>%
+  rename(., bamean = 'mean(mean)')
+
+MSOA_road_account <- left_join(MSOA_road_account, BA, by = c('MSOA11CD' = 'ECODE'))
+# plot
+tm_shape(MSOA_road_account)+
+  ## boundries
+  tm_borders(col = "white",alpha = 0.01, lwd = 0.01)+
+  ## fill color
+  tm_fill(col = 'bamean',n = 5,style = 'quantile', palette = "YlGnBu",colorNA = "gray",
+          legend.show = TRUE,legend.hist = FALSE,
+          title = 'Road Density')+
+  tm_compass(size = 2.5, text.size = 0.7, type = "arrow", position=c("left", "bottom"))+ #compass
+  tm_scale_bar(width = 0.15, position=c("left", "bottom"), text.size = 0.5)+   ## bar
+  # tm_xlab("Longitude") + tm_ylab("Latitude")  # coordinate
+  tm_layout(title = "d. Population Density", 
+            main.title = "", title.size = 0.77) 
+```
+
+# 3. Data Cleaning and Distribution Visualization
+
+## 3.2 Distribution Visualization
+```{r,cache=TRUE, message = FALSE}
+# Select POI_density
+Independentdata <- select(MSOA_POI_account, MSOA11CD, density) %>%
+  rename(.,POI_density = density)
+# Select POI_diversity
+POI_diversity <- select(diversity,MSOA11CD,rich_cla_den) %>%
+  st_drop_geometry()
+Independentdata <- left_join(Independentdata, POI_diversity, by=c('MSOA11CD'= 'MSOA11CD'))
+Independentdata <- rename(Independentdata,POI_diversity = rich_cla_den)
+# Select Road_density
+Road_density <- select(MSOA_road_account,MSOA11CD,density,bamean) %>%
+  st_drop_geometry()
+Independentdata <- left_join(Independentdata, Road_density, by=c('MSOA11CD'= 'MSOA11CD'))
+Independentdata <-rename(Independentdata, Road_density = density)
+# drop geo inf
+Independentdata <- Independentdata %>%
+  st_drop_geometry()
+```
+
+
+```{r}
+fourindex <- Independentdata 
+fourindex <- left_join(fourindex, LD_MSOA, by=c('MSOA11CD'='MSOA11CD'))
+fourindex <- select(fourindex,-MSOA11NM, -area)
+
+#POI density
+minPd <- min(fourindex$POI_density)
+Pd <- max(fourindex$POI_density) - min(fourindex$POI_density)
+pd_norm <-  fourindex$POI_density - minPd
+fourindex$pd_norm <- pd_norm / Pd
+
+#POI diversity
+minPdiv <- min(fourindex$POI_diversity)
+Pdiv <- max(fourindex$POI_diversity) - min(fourindex$POI_diversity)
+pdiv_norm <-  fourindex$POI_diversity - minPdiv
+fourindex$pdiv_norm <- pdiv_norm / Pdiv
+
+#Road density
+minR <- min(fourindex$Road_density)
+R <- max(fourindex$Road_density) - min(fourindex$Road_density)
+r_norm <- fourindex$Road_density - minR
+fourindex$r_norm <- r_norm / R
+
+#Population density
+minPpla <- min(fourindex$POPDEN)
+Ppla <- max(fourindex$POPDEN) - min(fourindex$POPDEN)
+Ppla_norm <- fourindex$POPDEN - minPpla
+fourindex$Ppla_norm <- Ppla_norm / Ppla
+
+#ba density
+minPp <- min(fourindex$bamean)
+Pp <- max(fourindex$bamean) - min(fourindex$bamean)
+Pp_norm <- fourindex$bamean - minPp
+fourindex$Pp_norm <- Pp_norm / Pp
+
+four_index <- fourindex %>%
+  select(.,MSOA11CD, pd_norm,pdiv_norm ,Ppla_norm,Pp_norm,r_norm)
+
+four_index$mixed <- four_index$pd_norm * 0.5 + four_index$pdiv_norm * 0.5
+four_index$ba_norm <- 1 - four_index$Pp_norm 
+```
+
+```{r}
+four_index_GEO <- left_join( LD_MSOA,four_index, by = c('MSOA11CD' = 'MSOA11CD')) %>%
+  select(.,-MSOA11NM,-area)
+
+# mixed
+tm_shape(four_index_GEO)+
+  ## boundries
+  tm_borders(col = "white",alpha = 0.01, lwd = 0.01)+
+  ## fill color
+  tm_fill(col = 'mixed',n = 5,style = 'quantile', palette = "Blues",colorNA = "gray",
+          legend.show = TRUE,legend.hist = FALSE,
+          title = 'POI density&diversity')+
+  tm_compass(size = 2.5, text.size = 0.7, type = "arrow", position=c("left", "bottom"))+ #compass
+  tm_scale_bar(width = 0.15, position=c("left", "bottom"), text.size = 0.5)+   ## bar
+  # tm_xlab("Longitude") + tm_ylab("Latitude")  # coordinate
+  tm_layout(title = "a. Mixed_use", 
+            main.title = "", title.size = 1) 
+
+# old buildings
+tm_shape(four_index_GEO)+
+  ## boundries
+  tm_borders(col = "white",alpha = 0.01, lwd = 0.01)+
+  ## fill color
+  tm_fill(col = 'Pp_norm',n = 5,style = 'quantile', palette = "Blues",colorNA = "gray",
+          legend.show = TRUE,legend.hist = FALSE,
+          title = 'age of buildings')+
+  tm_compass(size = 2.5, text.size = 0.7, type = "arrow", position=c("left", "bottom"))+ #compass
+  tm_scale_bar(width = 0.15, position=c("left", "bottom"), text.size = 0.5)+   ## bar
+  # tm_xlab("Longitude") + tm_ylab("Latitude")  # coordinate
+  tm_layout(title = "b. Old buildings", 
+            main.title = "", title.size = 1) 
+
+# block
+tm_shape(four_index_GEO)+
+  ## boundries
+  tm_borders(col = "white",alpha = 0.01, lwd = 0.01)+
+  ## fill color
+  tm_fill(col = 'r_norm',n = 5,style = 'quantile', palette = "Blues",colorNA = "gray",
+          legend.show = TRUE,legend.hist = FALSE,
+          title = 'Road Density')+
+  tm_compass(size = 2.5, text.size = 0.7, type = "arrow", position=c("left", "bottom"))+ #compass
+  tm_scale_bar(width = 0.15, position=c("left", "bottom"), text.size = 0.5)+   ## bar
+  # tm_xlab("Longitude") + tm_ylab("Latitude")  # coordinate
+  tm_layout(title = "c. Small block", 
+            main.title = "", title.size = 1) 
+
+# old buildings
+tm_shape(four_index_GEO)+
+  ## boundries
+  tm_borders(col = "white",alpha = 0.01, lwd = 0.01)+
+  ## fill color
+  tm_fill(col = 'POPDEN',n = 5,style = 'quantile', palette = "Blues",colorNA = "gray",
+          legend.show = TRUE,legend.hist = FALSE,
+          title = 'Density')+
+  tm_compass(size = 2.5, text.size = 0.7, type = "arrow", position=c("left", "bottom"))+ #compass
+  tm_scale_bar(width = 0.15, position=c("left", "bottom"), text.size = 0.5)+   ## bar
+  # tm_xlab("Longitude") + tm_ylab("Latitude")  # coordinate
+  tm_layout(title = "d. Density", 
+            main.title = "", title.size = 1) 
+
+```
+
+```{r}
+par(mfrow=c(1, 4))  # divide graph area in 2 columns
+# The original data
+boxplot(four_index$mixed, main="Mixed_use", col = '#b0c7f0')
+boxplot(four_index$ba_norm, main="Building_age", col = '#b0c7f0')
+boxplot(four_index$r_norm, main="small_block", col = '#b0c7f0')
+boxplot(four_index$Ppla_norm, main="Density",col = '#b0c7f0')
+
+```
+
+None of them are Normal distribution so we make them to logarithmic
+```{r, cache=TRUE, message = FALSE}
+#log
+four_index$log_mix <- log(four_index$mixed)
+four_index$log_r <- log(four_index$r_norm)
+four_index$log_pop <- log(four_index$Ppla_norm)
+four_index$log_bamean <- log(four_index$ba_norm)
+
+```
+
+Show the data in boxlot
+```{r, cache=TRUE, message = FALSE}
+
+```
+
+
+```{r, cache=TRUE, message = FALSE}
+boxplot(Independentdata$bamean, main="Building_age", col = '#b0c7f0')
+boxplot(Independentdata$log_POI_density, main="log_POI_density",col = '#b0c7f0')
+boxplot(Independentdata$log_POI_diversity, main="log_POI_diversity", col = '#b0c7f0')
+boxplot(Independentdata$log_Road_density, main="log_Road_density", col = '#b0c7f0')
+boxplot(Independentdata$log_bamean, main="log_building_age",col = '#b0c7f0')
+```
+
+Show the data distribution in histgram
+```{r, cache=TRUE, message = FALSE}
+par(mfrow=c(2, 4))  # divide graph area in 2 columns
+# The original data
+
+hist(four_index$mixed, main="POI_density", col = '#b0c7f0')
+hist(four_index$r_norm, main="POI_diversity",col = '#b0c7f0')
+hist(four_index$Ppla_norm, main="Road_density", col = '#b0c7f0')
+hist(four_index$ba_norm, main="Building_age", col = '#b0c7f0')
+
+hist(four_index$log_mix, main="log_POI_density",col = '#b0c7f0')
+hist(four_index$log_r, main="log_POI_diversity", col = '#b0c7f0')
+hist(four_index$log_pop, main="log_Road_density", col = '#b0c7f0')
+hist(four_index$log_bamean , main="log_Road_density", col = '#b0c7f0')
+
+
+
+write.csv(four_index,file = 'fourindex.csv')
+```
+
+
+```{r, cache=TRUE, message = FALSE}
+hist(Independentdata$log_bamean, main="log_Poplation_density",col = '#b0c7f0')
+```
+
+# 4. Neighborbood living index calculating
+The calculation of the index uses the same weight to calculate the four indicators. unity-based normalization is used to bring all values into the range [0,1]. After the four indicators are normalized into same rage, the average is calculated to obtain the index. The normalization formula is:
+**x'=  (x- x_min)/(x_max  - x_min )**
+
+```{r, cache=TRUE, message = FALSE}
+four_index_GEO$index <- four_index_GEO$mixed + four_index_GEO$r_norm + four_index_GEO$ba_norm + four_index_GEO$Ppla_norm
+```
+
+```{r}
+tm_shape(four_index_GEO)+
+  ## boundries
+  tm_borders(col = "white",alpha = 0.01, lwd = 0.01)+
+  ## fill color
+  tm_fill(col = 'index',n = 5,style = 'quantile', palette = "Blues",colorNA = "gray",
+          legend.show = TRUE,legend.hist = FALSE,
+          title = 'Density')+
+  tm_compass(size = 2.5, text.size = 0.7, type = "arrow", position=c("left", "bottom"))+ #compass
+  tm_scale_bar(width = 0.15, position=c("left", "bottom"), text.size = 0.5)+   ## bar
+  # tm_xlab("Longitude") + tm_ylab("Latitude")  # coordinate
+  tm_layout(title = "Diversity", 
+            main.title = "", title.size = 1) 
+```
+
+```{r}
+
+```
+
+
+```{r, cache=TRUE, message = FALSE}
+flow <- read.csv() 
+```
+
+Determine whether the normal distribution by histogram
+
+```{r, cache=TRUE, message = FALSE}
+flow <- read.csv('D:/F_SCUA-UCL/Final of yeaer/Urban vitality/visual.csv') 
+
+flow$sumod <- flow$o_flow + flow$d_flow
+
+flow_data <- flow %>%
+  select(., -MSOA11NM,-POPDEN,-X,-diff, -o_density, -d_density)
+
+# view the data (whether it is normalize)
+par(mfrow=c(1, 2),pin = c(3,2.5)) 
+boxplot(flow_data$sumod, main="Flow")
+hist(flow_data$sumod, main="Flow")
+
+flow_dist <- flow_data %>%
+  ggplot(aes(x=sumod)) +
+  geom_histogram(position="identity", 
+                 alpha=0.5, 
+                 bins=15, 
+                 fill="#b0c7f0", col="black")+
+  geom_vline(aes(xintercept=mean(sumod)),
+             color="darkblue",
+             linetype="dashed")+
+  labs(title="Neighborbood living index",
+       x="log_index",
+       y="Frequency")+
+  theme_classic()+
+  theme(plot.title = element_text(hjust = 0.5))
+flow_dist
+```
+```{r}
+flow_data$logsumod <- log(flow_data$sumod)
+
+boxplot(flow_data$logsumod, main="Diversity",col = 'orange')
+
+Dist <- flow_data %>%
+  ggplot(aes(x=logsumod)) +
+  geom_histogram(position="identity", 
+                 alpha=0.5, 
+                 bins=15, 
+                 fill="red", col="black")+
+  geom_vline(aes(xintercept=mean(logsumod)),
+             color="darkblue",
+             linetype="dashed")+
+  labs(title="log of Flow",
+       x="log of Flow",
+       y="Frequency")+
+  theme_classic()+
+  theme(plot.title = element_text(hjust = 0.5))
+
+Dist
+```
+
+
+
+
+```{r}
+
+spatial_data <- four_index_GEO %>%
+  select(.,MSOA11CD,mixed,ba_norm,r_norm,Ppla_norm,index)
+
+
+
+qm_data <- left_join(spatial_data,flow_data,by=c('MSOA11CD' = 'MSOA11CD'))
+ldnogep <- LD_MSOA %>%
+  st_drop_geometry()
+qm_data <- left_join(qm_data, ldnogep,by=c('MSOA11CD' = 'MSOA11CD')) 
+
+qm_data$flowden <- qm_data$sumod /qm_data$POPDEN
+qm_data$flowden <- qm_data$flowden /qm_data$area
+```
+
+```{r}
+
+```
+
+
+```{r}
+# Select variables
+corre_variable <- qm_data %>%
+  select(.,-MSOA11CD)%>%
+  st_drop_geometry()
+# Plot it
+library(corrplot)
+cormat <- cor(corre_variable, use="complete.obs", method="pearson")
+corrplot(cormat)
+
+library(Hmisc)
+res2 <- corre_variable 
+res2 <- dplyr::mutate_all(res2,as.integer)
+res <- rcorr(as.matrix(res2))
+res
+```
+
+
+```{r}
+relation <- lm(qm_data$sumod~qm_data$index)
+print(summary(relation))
+```
+
+
+```{r}
+relation <- lm(qm_data$d_flow~qm_data$index)
+
+print(summary(relation))
+```
+```{r}
+# Select data
+Cluster_data <- corre_variable %>%
+  select(sumod, index)
+
+# translate data into int.
+Cluster_data <- dplyr::mutate_all(Cluster_data,as.integer)
+
+fit <- Cluster_data %>%
+  kmeans(., 5, nstart=50)
+
+# get cluster means
+
+library(tidymodels)
+
+centroid <- tidy(fit)%>%
+  #print the results of the cluster groupings
+  print()%>%
+  dplyr::select(sumod,index)
+
+
+```
+
+
+
+```{r}
+# Plot the clusters on a graph
+p <- ggplot(Cluster_data,aes(flowden, index))+
+  geom_point(aes(colour=factor(fit$cluster)))+
+  geom_point(data=centroid,aes(denpoplog, index), size=7, shape=18)+ theme(legend.position="none")
+
+clustering <- fit %>% 
+  # 
+  augment(., qm_data)%>%
+  dplyr::select(MSOA11CD, .cluster)%>%
+  #make sure the .cluster column is numeric
+  mutate(across(.cluster, as.numeric))%>%
+  # join the .cluster to our sf layer
+  left_join(qm_data, 
+            .,
+            by = c("MSOA11CD" = "MSOA11CD"))
+
+
+
+## make the scatter plot
+qm_data$cluster <- clustering$.cluster
+cluster_scatter <- ggplot(qm_data, aes(x=index,y=sumod,color = cluster))+
+  geom_point(aes(colour = cluster))
+cluster_scatter
+```
+
+```{r}
+
+flow_cluster02 <- qm_data %>%
+  filter(cluster ==4)%>%
+  st_drop_geometry()
+flow_cluster02$logflowden <- log(flow_cluster02$flowden)
+
+```
+
+```{r}
+coremain <- flow_cluster02 %>%
+  select(.,-cluster,-logmix,-logmixed)
+corre_variable <- coremain %>%
+  select(.,-MSOA11CD,-MSOA11NM, -POPDEN, -area, -sumod,-flowden, -mixed,-mix2)
+# Plot it
+library(corrplot)
+cormat <- cor(corre_variable, use="complete.obs", method="pearson")
+corrplot(cormat)
+
+library(Hmisc)
+res2 <- corre_variable 
+res2 <- dplyr::mutate_all(res2,as.integer)
+res <- rcorr(as.matrix(res2))
+res
+```
+
+```{r}
+relation <- lm(coremain$sumod~coremain$index)
+
+print(summary(relation))
+
+```
+
+```{r}
+relation <- lm(coremain$d_flow~coremain$index)
+
+print(summary(relation))
+```
+```{r}
+coremain11 <- flow_cluster01 %>%
+  select(.,-cluster)
+corre_variable <- coremain11 %>%
+  select(.,-MSOA11CD)%>%
+  st_drop_geometry()
+# Plot it
+library(corrplot)
+cormat <- cor(corre_variable, use="complete.obs", method="pearson")
+corrplot(cormat)
+
+library(Hmisc)
+res2 <- corre_variable 
+res2 <- dplyr::mutate_all(res2,as.integer)
+res <- rcorr(as.matrix(res2))
+res
+```
+
+
+```{r}
+# Select data
+Cluster_data <- flow_cluster02 %>%
+  select(index,sumod)%>%
+  st_drop_geometry()
+
+# translate data into int.
+Cluster_data <- dplyr::mutate_all(Cluster_data,as.integer)
+
+fit <- Cluster_data %>%
+  kmeans(., 5, nstart=50)
+
+# get cluster means
+
+library(tidymodels)
+
+centroid <- tidy(fit)%>%
+  #print the results of the cluster groupings
+  print()%>%
+  dplyr::select(index,sumod)
+
+```
+
+```{r}
+# Plot the clusters on a graph
+p <- ggplot(Cluster_data,aes(index,sumod))+
+  geom_point(aes(colour=factor(fit$cluster)))+
+  geom_point(data=centroid,aes(index,sumodw), size=7, shape=18)+ theme(legend.position="none")
+
+clustering <- fit %>% 
+  # 
+  augment(., flow_cluster02)%>%
+  dplyr::select(MSOA11CD, .cluster)%>%
+  #make sure the .cluster column is numeric
+  mutate(across(.cluster, as.numeric))%>%
+  # join the .cluster to our sf layer
+  left_join(flow_cluster02, 
+            .,
+            by = c("MSOA11CD" = "MSOA11CD"))
+
+
+
+## make the scatter plot
+flow_cluster02$cluster <- clustering$.cluster
+cluster_scatter <- ggplot(flow_cluster02, aes(x=index,y=sumod,color = cluster))+
+  geom_point(aes(colour = cluster))
+cluster_scatter
+
+head(flow_cluster02)
+
+scatter <- flow_cluster02 %>%
+  filter(cluster != 4)%>%
+  filter(cluster != 1)
+```
+
+
+
+```{r}
+write.csv(qm_data, file='qm_data.csv')
+write.csv(flow_cluster03, file='cluster01.csv')
+write.csv(flow_cluster01, file='cluster02.csv')
+write.csv(flow_cluster02, file='cluster03.csv')
+
+```
+
+```{r}
+ggplot(scatter, aes(x=sumod,y=index),colour = sex)+geom_point()+ geom_smooth(method = lm)
+
+scatter1 <- scatter %>%
+  st_drop_geometry()
+write.csv(scatter1, file='relationflowdiver.csv')
+
+
+fit<-lm(logsumod~index,data=scatter1)  
+summary(fit)  
+```
+```{r}
+difference <- qm_data %>%
+  select(MSOA11CD)
+difference$inflow <- qm_data$d_flow - qm_data$o_flow
+IN_OUT <- difference %>%
+  filter(inflow >=0)
+OUT_IN <- difference %>%
+  filter(inflow <0) 
+```
+
