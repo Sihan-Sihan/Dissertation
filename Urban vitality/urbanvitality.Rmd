@@ -1,0 +1,392 @@
+---
+title: "urban vitality"
+author: "Sihan Chen"
+date: "2021/7/25"
+output: html_document
+---
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r setup, include=FALSE}
+library(sp)
+library(sf)
+library(tmap)
+library(tmaptools)
+library(sf)
+library(geojsonio)
+library(dplyr)
+library(ggplot2)
+library(ggthemes)
+
+```
+
+
+```{r cars}
+LD_MSOA <- st_read(
+  'D:/F_SCUA-UCL/CASA05/workshop_1/statistical-gis-boundaries-london/statistical-gis-boundaries-london/ESRI/MSOA_2011_London_gen_MHW.shp')
+
+LD_MSOA <- LD_MSOA %>%
+  select(., MSOA11CD,MSOA11NM,geometry,POPDEN)
+
+car <- read.csv(
+  'D:/F_SCUA-UCL/CASA02/practice/baseline/TObs1.csv') 
+
+bus <- read.csv(
+  'D:/F_SCUA-UCL/CASA02/practice/baseline/TObs2.csv') 
+
+rail <- read.csv(
+  'D:/F_SCUA-UCL/CASA02/practice/baseline/TObs3.csv') 
+```
+
+
+```{r pressure, echo=FALSE}
+M_order <- LD_MSOA %>%
+  select(., MSOA11CD,MSOA11NM)%>%
+  st_drop_geometry()
+
+car_origin_ld <- left_join(car, M_order, by=c('origin_msoacode'= 'MSOA11CD'))%>%
+  filter(!MSOA11NM == '')%>%
+  select(.,-MSOA11NM )
+
+car_ld <- left_join(car_origin_ld, M_order, by=c('destination_msoacode'= 'MSOA11CD'))%>%
+  filter(!MSOA11NM == '')%>%
+  select(.,-MSOA11NM )
+
+bus_origin_ld <- left_join(bus, M_order, by=c('origin_msoacode'= 'MSOA11CD'))%>%
+  filter(!MSOA11NM == '')%>%
+  select(.,-MSOA11NM )
+
+bus_ld <- left_join(bus_origin_ld, M_order, by=c('destination_msoacode'= 'MSOA11CD'))%>%
+  filter(!MSOA11NM == '')%>%
+  select(.,-MSOA11NM )
+
+rail_origin_ld <- left_join(rail, M_order, by=c('origin_msoacode'= 'MSOA11CD'))%>%
+  filter(!MSOA11NM == '')%>%
+  select(.,-MSOA11NM )
+
+rail_ld <- left_join(rail_origin_ld, M_order, by=c('destination_msoacode'= 'MSOA11CD'))%>%
+  filter(!MSOA11NM == '')%>%
+  select(.,-MSOA11NM )
+```
+
+
+```{r pressure, echo=FALSE}
+car_ld$OD <- paste(car_ld$origin_msoacode,car_ld$destination_msoacode, sep = "", collapse = NULL)
+car_ld <- car_ld %>%
+  rename(.,car = data)
+
+bus_ld$OD <- paste(bus_ld$origin_msoacode,bus_ld$destination_msoacode, sep = "", collapse = NULL)
+bus_ld <- bus_ld %>%
+  rename(.,bus = data) %>%
+  select(., bus, OD)
+  
+rail_ld$OD <- paste(rail_ld$origin_msoacode,rail_ld$destination_msoacode, sep = "", collapse = NULL)
+rail_ld <- rail_ld %>%
+  rename(.,rail = data)%>%
+  select(., rail, OD)
+
+flow <- left_join(car_ld,bus_ld,by=c('OD' = 'OD'))
+
+flow <- left_join(flow,rail_ld,by=c('OD' = 'OD'))
+
+flow$flow <- flow$car + flow$bus + flow$rail
+```
+
+
+```{r pressure, echo=FALSE}
+LD_MSOA_point <- st_read(
+  'D:/F_SCUA-UCL/Final of year/FINAL/point/poin.shp')
+
+LD_MSOA_point <- LD_MSOA_point %>%
+  st_drop_geometry()
+
+LD_MSOA_point$lon <- LD_MSOA_point$lon* 0.00001
+LD_MSOA_point$lat <- LD_MSOA_point$lat* 0.00001
+
+flow <- left_join(flow, LD_MSOA_point, by=c('origin_msoacode' = 'MSOA11CD'))%>%
+  rename(., lon_o = lon, lat_o = lat)
+
+flow <- left_join(flow, LD_MSOA_point, by=c('destination_msoacode' = 'MSOA11CD'))%>%
+  rename(., lon_d = lon, lat_d = lat)
+
+flow <- flow %>%
+    filter(.,!flow == '')
+
+flow_visual <- flow %>%
+  select(.,flow, lon_o,lat_o,lon_d,lat_d)%>%
+  filter(.,!flow == '')
+
+  
+write.csv(flow,file = 'flow.csv')
+write.csv(flow_visual,file = 'flow_visual.csv')
+```
+
+```{r pressure, echo=FALSE}
+visual_o <- flow %>%
+  group_by(origin_msoacode)%>%
+  summarise(o_flow = sum(flow))
+
+visual_d <- flow %>%
+  group_by(destination_msoacode)%>%
+  summarise(d_flow = sum(flow))
+
+visual <- left_join(LD_MSOA,visual_o,by=c( 'MSOA11CD' = 'origin_msoacode'))
+visual$o_density <- visual$o_flow / visual$POPDEN
+
+visual <- left_join(visual,visual_d,by=c( 'MSOA11CD' = 'destination_msoacode'))
+visual$d_density <- visual$d_flow / visual$POPDEN
+visual$diff <- visual$d_flow -  visual$o_flow 
+
+visual <- visual %>%
+  st_drop_geometry()
+
+write.csv(visual,file = 'visual.csv')
+
+# plot
+tmap_mode('plot')  
+
+# plot
+tm_shape(visual)+
+  ## boundries
+  tm_borders(col = "grey",alpha = 0.1, lwd = 0.01)+
+  ## fill color
+  tm_fill(col = 'o_flow',n = 5,style = 'quantile', palette = "YlGnBu",colorNA = "gray",
+          legend.show = TRUE,legend.hist = FALSE,
+          title = 'origin')+
+  tm_compass(size = 2.5, text.size = 0.7, type = "arrow", position=c("right", "bottom"))+ #compass
+  tm_scale_bar(width = 0.15, position=c("right", "bottom"), text.size = 0.5)
+
+tm_shape(visual)+
+  ## boundries
+  tm_borders(col = "grey",alpha = 0.1, lwd = 0.01)+
+  ## fill color
+  tm_fill(col = 'o_density',n = 5,style = 'quantile', palette = "YlGnBu",colorNA = "gray",
+          legend.show = TRUE,legend.hist = FALSE,
+          title = 'origin/pop')+
+  tm_compass(size = 2.5, text.size = 0.7, type = "arrow", position=c("right", "bottom"))+ #compass
+  tm_scale_bar(width = 0.15, position=c("right", "bottom"), text.size = 0.5)
+
+tm_shape(visual)+
+  ## boundries
+  tm_borders(col = "grey",alpha = 0.1, lwd = 0.01)+
+  ## fill color
+  tm_fill(col = 'd_flow',n = 5,style = 'quantile', palette = "YlGnBu",colorNA = "gray",
+          legend.show = TRUE,legend.hist = FALSE,
+          title = 'destination')+
+  tm_compass(size = 2.5, text.size = 0.7, type = "arrow", position=c("right", "bottom"))+ #compass
+  tm_scale_bar(width = 0.15, position=c("right", "bottom"), text.size = 0.5)
+
+tm_shape(visual)+
+  ## boundries
+  tm_borders(col = "grey",alpha = 0.1, lwd = 0.01)+
+  ## fill color
+  tm_fill(col = 'd_density',n = 5,style = 'quantile', palette = "YlGnBu",colorNA = "gray",
+          legend.show = TRUE,legend.hist = FALSE,
+          title = 'destination/pop')+
+  tm_compass(size = 2.5, text.size = 0.7, type = "arrow", position=c("right", "bottom"))+ #compass
+  tm_scale_bar(width = 0.15, position=c("right", "bottom"), text.size = 0.5)
+
+tm_shape(visual)+
+  ## boundries
+  tm_borders(col = "grey",alpha = 0.1, lwd = 0.01)+
+  ## fill color
+  tm_fill(col = 'diff',n = 5,style = 'quantile', palette = "YlGnBu",colorNA = "gray",
+          legend.show = TRUE,legend.hist = FALSE,
+          title = 'D-O')+
+  tm_compass(size = 2.5, text.size = 0.7, type = "arrow", position=c("right", "bottom"))+ #compass
+  tm_scale_bar(width = 0.15, position=c("right", "bottom"), text.size = 0.5)
+```
+
+```{r pressure, echo=FALSE}
+
+car_dis <- read.csv(
+  'D:/F_SCUA-UCL/CASA02/practice/baseline/dis1.csv') 
+
+bus_dis <- read.csv(
+  'D:/F_SCUA-UCL/CASA02/practice/baseline/dis2.csv') 
+
+rail_dis <- read.csv(
+  'D:/F_SCUA-UCL/CASA02/practice/baseline/dis3.csv') 
+
+```
+
+```{r pressure, echo=FALSE}
+
+car_dis_origin_ld <- left_join(car_dis, M_order, by=c('origin_msoacode'= 'MSOA11CD'))%>%
+  filter(!MSOA11NM == '')%>%
+  select(.,-MSOA11NM )
+
+car_dis_ld <- left_join(car_dis_origin_ld, M_order, by=c('destination_msoacode'= 'MSOA11CD'))%>%
+  filter(!MSOA11NM == '')%>%
+  select(.,-MSOA11NM )
+
+bus_dis_origin_ld <- left_join(bus_dis, M_order, by=c('origin_msoacode'= 'MSOA11CD'))%>%
+  filter(!MSOA11NM == '')%>%
+  select(.,-MSOA11NM )
+
+bus_dis_ld <- left_join(bus_dis_origin_ld, M_order, by=c('destination_msoacode'= 'MSOA11CD'))%>%
+  filter(!MSOA11NM == '')%>%
+  select(.,-MSOA11NM )
+
+rail_dis_origin_ld <- left_join(rail_dis, M_order, by=c('origin_msoacode'= 'MSOA11CD'))%>%
+  filter(!MSOA11NM == '')%>%
+  select(.,-MSOA11NM )
+
+rail_dis_ld <- left_join(rail_dis_origin_ld, M_order, by=c('destination_msoacode'= 'MSOA11CD'))%>%
+  filter(!MSOA11NM == '')%>%
+  select(.,-MSOA11NM )
+```
+
+```{r pressure, echo=FALSE}
+car_dis_ld$OD <- paste(car_dis_ld$origin_msoacode,car_dis_ld$destination_msoacode, sep = "", collapse = NULL)
+car_dis_ld <- car_dis_ld %>%
+  rename(.,car_dis = data)
+
+bus_dis_ld$OD <- paste(bus_dis_ld$origin_msoacode,bus_dis_ld$destination_msoacode, sep = "", collapse = NULL)
+bus_dis_ld <- bus_dis_ld %>%
+  rename(.,bus_dis = data) %>%
+  select(., bus_dis, OD)
+  
+rail_dis_ld$OD <- paste(rail_dis_ld$origin_msoacode,rail_dis_ld$destination_msoacode, sep = "", collapse = NULL)
+rail_dis_ld <- rail_dis_ld %>%
+  rename(.,rail_dis = data)%>%
+  select(., rail_dis, OD)
+
+dis <- left_join(car_dis_ld,bus_dis_ld,by=c('OD' = 'OD'))
+
+dis <- left_join(dis,rail_dis_ld,by=c('OD' = 'OD'))
+
+dis$dis <- dis$car + dis$bus + dis$rail
+
+head(dis)
+```
+
+```{r pressure, echo=FALSE}
+#car-dis
+mincar <- min(dis$car_dis)
+card <- max(dis$car_dis) - min(dis$car_dis)
+car_norm <-  dis$car_dis - mincar
+dis$car_dis_norm <- car_norm / card
+
+#POI diversity
+minPdiv <- min(dis$bus_dis)
+Pdiv <- max(dis$bus_dis) - min(dis$bus_dis)
+pdiv_norm <-  dis$bus_dis - minPdiv
+dis$bus_dis_norm <- pdiv_norm / Pdiv
+
+#Road density
+minR <- min(dis$rail_dis)
+R <- max(dis$rail_dis) - min(dis$rail_dis)
+r_norm <- dis$rail_dis - minR
+dis$rail_dis_norm <- r_norm / R
+
+dis$dis <- dis$car_dis_norm + dis$bus_dis_norm + dis$rail_dis_norm
+dis$dis_mean <- dis$dis / 3 * 100
+
+dis$dis_index <- 1 / dis$dis_mean * 100
+
+head(dis)
+
+```
+```{r}
+visual_o_dis <- dis %>%
+  group_by(origin_msoacode)%>%
+  summarise(o_dis = sum(dis_index))
+
+visual_d_dis <- dis %>%
+  group_by(destination_msoacode)%>%
+  summarise(d_dis = sum(dis_index))
+
+visual_dis <- left_join(LD_MSOA,visual_o_dis,by=c( 'MSOA11CD' = 'origin_msoacode'))
+
+visual_dis <- left_join(visual_dis,visual_d_dis,by=c( 'MSOA11CD' = 'destination_msoacode'))
+
+visual_dis$od_dis <- visual_dis$o_dis + visual_dis$d_dis 
+
+write.csv(visual_dis,file = 'visual_dis.csv')
+
+# plot
+tmap_mode('plot')  
+
+# plot
+tm_shape(visual_dis)+
+  ## boundries
+  tm_borders(col = "grey",alpha = 0.1, lwd = 0.01)+
+  ## fill color
+  tm_fill(col = 'o_dis',n = 5,style = 'quantile', palette = "YlGnBu",colorNA = "gray",
+          legend.show = TRUE,legend.hist = FALSE,
+          title = 'o_dis')+
+  tm_compass(size = 2.5, text.size = 0.7, type = "arrow", position=c("right", "bottom"))+ #compass
+  tm_scale_bar(width = 0.15, position=c("right", "bottom"), text.size = 0.5)
+
+tm_shape(visual_dis)+
+  ## boundries
+  tm_borders(col = "grey",alpha = 0.1, lwd = 0.01)+
+  ## fill color
+  tm_fill(col = 'd_dis',n = 5,style = 'quantile', palette = "YlGnBu",colorNA = "gray",
+          legend.show = TRUE,legend.hist = FALSE,
+          title = 'd_dis')+
+  tm_compass(size = 2.5, text.size = 0.7, type = "arrow", position=c("right", "bottom"))+ #compass
+  tm_scale_bar(width = 0.15, position=c("right", "bottom"), text.size = 0.5)
+```
+```{r}
+visual_dis_pre <- visual_dis %>%
+  select(.,MSOA11CD, o_dis, d_dis,od_dis)%>%
+    st_drop_geometry()
+
+index <- left_join(visual, visual_dis_pre,by = c('MSOA11CD' = 'MSOA11CD'))
+
+index$od_flow <- index$o_flow +index$d_flow
+index$od_flowden <- index$o_density +index$d_density
+
+write.csv(index, file = 'index.csv')
+```
+
+
+
+```{r}
+outlier <- read.csv(
+  'D:/F_SCUA-UCL/Final of year/FINAL/cluster03.csv') 
+
+outlier <- outlier %>%
+  select(.,MSOA11CD,cluster)
+
+outlier_o <- left_join(flow, outlier, by=c('origin_msoacode'= 'MSOA11CD'))%>%
+  filter(!cluster == '')
+
+outlier_d <- left_join(flow, outlier, by=c('destination_msoacode'= 'MSOA11CD'))%>%
+  filter(!cluster == '')
+
+
+outlier_d <- outlier_d %>%
+  filter(OD!='E02000001E02000001',OD!='E02000193E02000193',OD!='E02000972E02000972',OD!='E02000977E02000977',
+         OD!='E02000979E02000979',OD!='E02006854E02006854')
+
+write.csv(outlier_o,file = 'outlierooo.csv')
+write.csv(outlier_d,file = 'outlierddd.csv')
+```
+
+```{r}
+outlier <- read.csv(
+  'D:/F_SCUA-UCL/Final of year/FINAL/cluster01.csv') 
+
+outlier <- outlier %>%
+  select(.,MSOA11CD,cluster)
+
+outlier_o <- left_join(flow, outlier, by=c('origin_msoacode'= 'MSOA11CD'))%>%
+  filter(!cluster == '')
+
+outlier_d <- left_join(flow, outlier, by=c('destination_msoacode'= 'MSOA11CD'))%>%
+  filter(!cluster == '')
+
+
+outlier_d <- outlier_d %>%
+  filter(OD!='E02000001E02000001',OD!='E02000193E02000193',OD!='E02000972E02000972',OD!='E02000977E02000977',
+         OD!='E02000979E02000979',OD!='E02006854E02006854')
+
+write.csv(outlier_o,file = 'outlierooo11.csv')
+write.csv(outlier_d,file = 'outlierddd11.csv')
+```
+

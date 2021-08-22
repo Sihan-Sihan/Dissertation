@@ -1,0 +1,355 @@
+---
+title: "job-housing"
+author: "Sihan Chen"
+date: "2021/8/4"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(sp)
+library(sf)
+library(tmap)
+library(tmaptools)
+library(sf)
+library(geojsonio)
+library(dplyr)
+library(ggplot2)
+library(ggthemes)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+flow <- read.csv("D:/F_SCUA-UCL/Final of yeaer/Urban vitality/flow.csv")
+sumod <- read.csv("D:/F_SCUA-UCL/Final of yeaer/Urban vitality/visual.csv")
+
+Borough <- st_read(
+  'D:/F_SCUA-UCL/CASA05/workshop_1/statistical-gis-boundaries-london/statistical-gis-boundaries-london/ESRI/London_Borough_Excluding_MHW.shp')
+
+MSOA <- st_read(
+  'D:/F_SCUA-UCL/CASA05/workshop_1/statistical-gis-boundaries-london/statistical-gis-boundaries-london/ESRI/MSOA_2011_London_gen_MHW.shp')
+
+MSOA_BOR <- MSOA %>%
+  select(.,MSOA11CD,LAD11CD)%>%
+  st_drop_geometry()
+
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+head(flow)
+
+bofl <- left_join(flow, MSOA_BOR,by=c("origin_msoacode" = "MSOA11CD"))%>%
+  rename(ori_bo = LAD11CD)
+bofl <- left_join(bofl, MSOA_BOR,by=c("destination_msoacode" = "MSOA11CD"))%>%
+  rename(des_bo = LAD11CD)
+boflow <- bofl %>%
+  select(.,flow,ori_bo,des_bo)
+
+boflow$OD <- paste(boflow$ori_bo,boflow$des_bo, sep = "", collapse = NULL)
+
+visualbo <-  boflow %>%
+  group_by(OD) %>%
+  summarise(flow = sum(flow))
+write.csv(visualbo,file = 'visualbooo.csv')
+visualboooo <- read.csv("D:/F_SCUA-UCL/Final of yeaer/job-housing/visualbooo1.csv")
+```
+```{r}
+BO <- st_read(
+  'D:/F_SCUA-UCL/Export_Output.shp')
+
+BO <- select(BO, GSS_CODE,lat,lon)%>%
+  st_drop_geometry()
+
+BO$lat <- BO$lat * 0.00001
+BO$lon <- BO$lon * 0.00001
+
+visualbonew <- left_join(visualboooo, BO, by=c('O' = 'GSS_CODE'))%>%
+  rename(., lon_o = lon, lat_o = lat)
+visualbonew <- left_join(visualbonew, BO, by=c('D' = 'GSS_CODE'))%>%
+  rename(., lon_d = lon, lat_d = lat)
+write.csv(visualbonew,file='visualbobobo.csv')
+```
+
+
+```{r}
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+```{r}
+bofl <- bofl %>%
+  select(.,origin_msoacode,destination_msoacode,flow,ori_bo,des_bo)
+
+balance <- bofl %>%
+  filter(bofl$ori_bo == bofl$des_bo)
+
+balance_o <- balance %>%
+  group_by(origin_msoacode)%>%
+  summarise(blc_o_flow = sum(flow))
+
+balance_d <- balance %>%
+  group_by(destination_msoacode)%>%
+  summarise(blc_d_flow = sum(flow))
+
+balance_sum <- left_join(balance_o,balance_d,by=c('origin_msoacode' = 'destination_msoacode'))
+
+balance_sum$blc_sum <- balance_sum$blc_o_flow + balance_sum$blc_d_flow
+
+sumod$sum <- sumod$o_flow + sumod$d_flow
+
+sumod <- left_join(sumod,balance_sum,by=c('MSOA11CD'='origin_msoacode'))
+
+head(sumod)
+
+sumod$balance <- sumod$blc_sum / sumod$sum * 100
+head(sumod)
+
+
+```
+
+```{r}
+par(mfrow=c(1, 2),pin = c(3,2.5)) 
+boxplot(sumod$balance, main="Balance",col = 'orange')
+hist(sumod$balance, main="Balance",col = 'orange')
+
+```
+
+```{r}
+diversity <- read.csv('D:/F_SCUA-UCL/Final of year/FINAL/qm_data.csv')%>%
+  select(., MSOA11CD,mixed,ba_norm,r_norm,Ppla_norm,index)
+
+sumcor <- sumod %>%
+  select(.,MSOA11CD,blc_o_flow,blc_d_flow,blc_sum,balance)
+
+core <- left_join(diversity, sumcor, by= c('MSOA11CD'))
+```
+
+```{r}
+core <- core %>%
+  filter(balance != '')
+
+corre_variable <- core %>%
+  select(.,-MSOA11CD)
+# Plot it
+library(corrplot)
+cormat <- cor(corre_variable, use="complete.obs", method="pearson")
+corrplot(cormat)
+
+library(Hmisc)
+res2 <- corre_variable 
+res2 <- dplyr::mutate_all(res2,as.integer)
+res <- rcorr(as.matrix(res2))
+res
+```
+
+```{r}
+# Select data
+Cluster_data <- corre_variable %>%
+  select(balance, index)
+
+# translate data into int.
+Cluster_data <- dplyr::mutate_all(Cluster_data,as.integer)
+
+fit <- Cluster_data %>%
+  kmeans(., 5, nstart=50)
+
+# get cluster means
+
+library(tidymodels)
+
+centroid <- tidy(fit)%>%
+  #print the results of the cluster groupings
+  print()%>%
+  dplyr::select(balance,index)
+
+```
+
+
+
+```{r}
+# Plot the clusters on a graph
+p <- ggplot(Cluster_data,aes(balance, index))+
+  geom_point(aes(colour=factor(fit$cluster)))+
+  geom_point(data=centroid,aes(balance, index), size=7, shape=18)+ theme(legend.position="none")
+
+clustering <- fit %>% 
+  # 
+  augment(., core)%>%
+  dplyr::select(MSOA11CD, .cluster)%>%
+  #make sure the .cluster column is numeric
+  mutate(across(.cluster, as.numeric))%>%
+  # join the .cluster to our sf layer
+  left_join(core, 
+            .,
+            by = c("MSOA11CD" = "MSOA11CD"))
+
+
+
+## make the scatter plot
+core$cluster <- clustering$.cluster
+cluster_scatter <- ggplot(core, aes(x=index,y=balance,color = cluster))+
+  geom_point(aes(colour = cluster))
+cluster_scatter
+```
+
+```{r}
+ggplot(core, aes(x=balance,y=index),colour = sex)+geom_point()+ geom_smooth(method = lm)
+write.csv(core,file = 'relationjobdivers.csv')
+
+```
+
+
+```{r}
+LD_MSOA <- st_read(
+  'D:/F_SCUA-UCL/CASA05/workshop_1/statistical-gis-boundaries-london/statistical-gis-boundaries-london/ESRI/MSOA_2011_London_gen_MHW.shp') 
+
+LD_MSOA_area <- st_area(LD_MSOA)
+LD_MSOA_area <- LD_MSOA_area %>% as.numeric(as.character(LD_MSOA_area))
+
+# Add a colomn of area to LD_LSOA
+LD_MSOA$area<- LD_MSOA_area
+
+LD_MSOA <- LD_MSOA %>%
+  select(.,MSOA11CD,POPDEN,area)
+
+figure <- left_join(LD_MSOA, core, by=c('MSOA11CD'))
+
+figure$blcpop <- figure$blc_sum / figure$POPDEN /figure$area * 10000
+```
+
+```{r}
+## plot
+tm_shape(figure )+
+  ## boundries
+  tm_borders(col = "grey",alpha = 0.1, lwd = 0.01)+
+  ## fill color
+  tm_fill(col = 'blcpop',n = 5,style = 'quantile', palette = "Oranges",colorNA = "gray",
+          legend.show = TRUE,legend.hist = FALSE,
+          title = 'J-H balance')+
+  tm_compass(size = 2.5, text.size = 0.7, type = "arrow", position=c("right", "bottom"))+ #compass
+  tm_scale_bar(width = 0.15, position=c("right", "bottom"), text.size = 0.5)   ## bar
+```
+```{r}
+figure <- figure %>%
+  filter(balance != '')
+
+corre_variable <- figure %>%
+  select(.,-MSOA11CD,-area,-POPDEN,-balance)%>%
+  st_drop_geometry()
+
+corre_variable <- corre_variable %>%
+  rename(balance = blcpop)
+# Plot it
+library(corrplot)
+cormat <- cor(corre_variable, use="complete.obs", method="pearson")
+corrplot(cormat)
+
+library(Hmisc)
+res2 <- corre_variable 
+res2 <- dplyr::mutate_all(res2,as.integer)
+res <- rcorr(as.matrix(res2))
+res
+```
+```{r}
+Cluster_data <- corre_variable %>%
+  select(balance, index)
+
+# translate data into int.
+Cluster_data <- dplyr::mutate_all(Cluster_data,as.integer)
+
+fit <- Cluster_data %>%
+  kmeans(., 5, nstart=50)
+
+# get cluster means
+
+library(tidymodels)
+
+centroid <- tidy(fit)%>%
+  #print the results of the cluster groupings
+  print()%>%
+  dplyr::select(balance,index)
+```
+```{r}
+# Plot the clusters on a graph
+p <- ggplot(Cluster_data,aes(balance, index))+
+  geom_point(aes(colour=factor(fit$cluster)))+
+  geom_point(data=centroid,aes(balance, index), size=7, shape=18)+ theme(legend.position="none")
+
+clustering <- fit %>% 
+  # 
+  augment(., figure)%>%
+  dplyr::select(MSOA11CD, .cluster)%>%
+  #make sure the .cluster column is numeric
+  mutate(across(.cluster, as.numeric))%>%
+  # join the .cluster to our sf layer
+  left_join(figure, 
+            .,
+            by = c("MSOA11CD" = "MSOA11CD"))
+
+## make the scatter plot
+figure$cluster <- clustering$.cluster
+cluster_scatter <- ggplot(figure, aes(x=index,y=balance,color = cluster))+
+  geom_point(aes(colour = cluster))
+cluster_scatter
+```
+
+```{r}
+ggplot(figure, aes(x=blcpop,y=index),colour = sex)+geom_point()+ geom_smooth(method = lm)
+write.csv(figure, file = 'relationjhdivfinal.csv')
+```
+```{r}
+fit<-lm(blcpop~index,data=figure)  
+summary(fit) 
+```
+```{r}
+distance <- read.csv('D:/F_SCUA-UCL/Final of yeaer/Urban vitality/visual_dis.csv')
+
+distance_map <- left_join(distance, MSOA_BOR, by=c("MSOA11CD"))
+
+mapmsoa <- left_join(MSOA, distance_map,by=c('MSOA11CD' = "MSOA11CD"))
+
+distance_mapbo <-  distance_map %>%
+  group_by(LAD11CD) %>%
+  summarise(distanceall = sum(o_dis),n = n())
+distance_mapbo$distance <- distance_mapbo$distanceall / distance_mapbo$n
+distance_mapbo$distance <- 7500 - distance_mapbo$distance 
+
+mapbo <- left_join(Borough, distance_mapbo,by=c('GSS_CODE' = "LAD11CD"))
+
+```
+
+
+```{r}
+# plot
+tm_shape(mapbo )+
+  ## boundries
+  tm_borders(col = "grey",alpha = 0.1, lwd = 0.01)+
+  ## fill color
+  tm_fill(col = 'distance',n = 5,style = 'quantile', palette = "YlGnBu",colorNA = "gray",
+          legend.show = TRUE,legend.hist = FALSE,
+          title = 'distance')+
+  tm_compass(size = 2.5, text.size = 0.7, type = "arrow", position=c("right", "bottom"))+ #compass
+  tm_scale_bar(width = 0.15, position=c("right", "bottom"), text.size = 0.5)   ## bar
+
+tm_shape(mapmsoa)+
+  ## boundries
+  tm_borders(col = "grey",alpha = 0.1, lwd = 0.01)+
+  ## fill color
+  tm_fill(col = 'o_dis',n = 5,style = 'quantile', palette = "YlGnBu",colorNA = "gray",
+          legend.show = TRUE,legend.hist = FALSE,
+          title = 'distance')+
+  tm_compass(size = 2.5, text.size = 0.7, type = "arrow", position=c("right", "bottom"))+ #compass
+  tm_scale_bar(width = 0.15, position=c("right", "bottom"), text.size = 0.5)   ## bar
+
+mapbocsv <- mapbo %>%
+  st_drop_geometry()
+write.csv(mapbocsv, file='distance_time.csv')
+```
+
